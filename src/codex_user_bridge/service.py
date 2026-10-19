@@ -130,7 +130,7 @@ def main():
     parser.add_argument('--db', type=Path, default=Path('.local/messages.sqlite3'))
     parser.add_argument('--interval', type=positive, default=3.0)
     parser.add_argument('--delay', type=positive, default=3.0)
-    parser.add_argument('--channel', choices=['local_mock', 'telegram', 'feishu'], default='local_mock')
+    parser.add_argument('--channel', choices=['local_mock', 'telegram', 'feishu', 'weixin'], default='local_mock')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     store = Store(args.db)
@@ -141,9 +141,12 @@ def main():
             if args.channel == 'telegram':
                 from .telegram import TelegramChannel
                 external = TelegramChannel.from_env(store)
-            else:
+            elif args.channel == 'feishu':
                 from .feishu import FeishuChannel
                 external = FeishuChannel.from_env(store)
+            else:
+                from .weixin import WeixinChannel
+                external = WeixinChannel.from_env(store)
             external.start()
         except (ValueError, RuntimeError) as exc:
             server.server_close()
@@ -161,7 +164,7 @@ def main():
         pass
     finally:
         stop.set()
-        worker.join(timeout=15)
+        worker.join(timeout=45 if args.channel == 'weixin' else 15)
         server.server_close()
 
 

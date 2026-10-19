@@ -8,6 +8,7 @@ import subprocess
 import threading
 import tempfile
 import argparse
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -95,13 +96,37 @@ def main():
             json.dumps(evidence, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         print('Codex 插件安装、Skill 发现、两个 MCP 工具加载：通过；未调用模型。')
     finally:
-        process.terminate()
-        process.wait(timeout=10)
-        reader.join(timeout=3)
+        # Windows 的 codex 可能是包装进程；先以 EOF 正常关闭宿主，让它回收 MCP 子进程。
+        # 直接 terminate 包装进程会遗留子进程继续写入临时环境，导致清理竞态。
         process.stdin.close()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            else:
+                process.terminate()
+            process.wait(timeout=10)
+        reader.join(timeout=3)
         process.stdout.close()
         log.close()
-        temp.cleanup()
+        # 官方 SDK 的深层文件名可能超过 Windows 传统 260 字符限制；只清理本次专属目录。
+        cleanup_path = workspace.resolve()
+        assert cleanup_path.parent == Path(tempfile.gettempdir()).resolve()
+        assert cleanup_path.name.startswith('codex-user-bridge-validation-')
+        deletion_path = ('\\\\?\\' + str(cleanup_path)) if os.name == 'nt' else str(cleanup_path)
+        # 杀毒软件或延迟关闭的句柄可能短暂占用此脚本专属临时目录，有限重试，不隐藏失败。
+        for attempt in range(5):
+            try:
+                if cleanup_path.exists():
+                    shutil.rmtree(deletion_path)
+                temp.cleanup()
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.5)
 
 
 if __name__ == '__main__':

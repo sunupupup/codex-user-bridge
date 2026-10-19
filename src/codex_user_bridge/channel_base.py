@@ -65,6 +65,7 @@ def parse_reply(text):
 
 class ExternalChannel:
     channel = ''
+    lease_seconds = 45
 
     def __init__(self, store, api, identity):
         self.store, self.api = store, api
@@ -72,7 +73,7 @@ class ExternalChannel:
         store.bind_channel(self.channel, identity)
 
     def start(self):
-        if not self.store.lease(self.owner, channel=self.channel):
+        if not self.store.lease(self.owner, channel=self.channel, ttl=self.lease_seconds):
             raise ValueError('此数据库已有该渠道接收进程，请勿重复启动。')
         try:
             self.api.validate()

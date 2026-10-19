@@ -97,14 +97,14 @@ class Store:
                 raise ValueError('此数据库已绑定另一个 Telegram Bot/接收者，请使用不同的 --db。')
             db.execute("INSERT OR IGNORE INTO state VALUES ('telegram_identity',?)", (identity,))
 
-    def lease(self, owner, release=False, channel='telegram'):
+    def lease(self, owner, release=False, channel='telegram', ttl=45):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute("SELECT value FROM state WHERE key=?", (channel + '_lease',)).fetchone()
             previous = json.loads(row[0]) if row else {}
             if previous.get('owner') != owner and previous.get('until', 0) > time.time():
                 return False
-            value = json.dumps({'owner': owner, 'until': 0 if release else time.time() + 45})
+            value = json.dumps({'owner': owner, 'until': 0 if release else time.time() + ttl})
             db.execute("INSERT OR REPLACE INTO state VALUES (?,?)", (channel + '_lease', value))
             return True
 
@@ -184,9 +184,15 @@ class Store:
         # 同一平台消息只消费一次；回答、事件去重和游标一起提交，避免 ACK 后丢失回答。
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            for event_id, qid, parent_id, answer, sender_id in events:
+            for event in events:
+                event_id, qid, parent_id, answer, sender_id = event[:5]
                 inserted = db.execute('INSERT OR IGNORE INTO receipts VALUES (?,?)', (channel, event_id)).rowcount
-                if not inserted or not answer:
+                if not inserted:
+                    continue
+                # 上下文属于某次入站事件，重投旧消息不得覆盖较新的会话 token。
+                for key, value in (event[5] if len(event) > 5 else {}).items():
+                    db.execute('INSERT OR REPLACE INTO state VALUES (?,?)', (key, value))
+                if not answer:
                     continue
                 predicate, value = ('question_id=?', qid) if qid else ('external_message_id=?', parent_id)
                 db.execute(f'UPDATE questions SET reply=?,answered_at=?,sender_id=? WHERE {predicate} '

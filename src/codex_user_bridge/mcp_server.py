@@ -15,7 +15,7 @@ Identifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r'^\S(?:
 
 class Reply(BaseModel):
     text: str
-    source: Literal['local_mock', 'telegram', 'feishu']
+    source: Literal['local_mock', 'telegram', 'feishu', 'weixin']
     is_simulated: bool
     sender_id: int | str | None = None
     answered_at: float
@@ -30,7 +30,7 @@ class Question(BaseModel):
     status: Literal['pending', 'answered']
     reply: Reply | None
     is_simulated: bool
-    channel: Literal['local_mock', 'telegram', 'feishu'] = 'local_mock'
+    channel: Literal['local_mock', 'telegram', 'feishu', 'weixin'] = 'local_mock'
     delivery_status: Literal['queued', 'sending', 'sent', 'unknown', 'failed'] = 'sent'
     delivery_error: str | None = None
     poll_after_seconds: int
