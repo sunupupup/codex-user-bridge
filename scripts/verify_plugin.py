@@ -24,7 +24,7 @@ def main():
     workspace = Path(temp.name)
     source = workspace / 'source'
     shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns(
-        '.local', '.venv', '.git', 'plugin', '__pycache__', '*.egg-info', 'build', 'dist'))
+        '.local', '.venv', '.git', '.env', '.env.*', 'plugin', '__pycache__', '*.egg-info', 'build', 'dist'))
     validation_home = workspace / 'codex-home'
     validation_home.mkdir(parents=True, exist_ok=True)
     # 所有安装状态只写隔离目录，不修改用户真实配置，也不使用登录凭据。

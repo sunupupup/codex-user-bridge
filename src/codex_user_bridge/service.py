@@ -20,8 +20,18 @@ def text(value, name, maximum):
     return value.strip()
 
 
-def make_server(store: Store, port=5555):
+def make_server(store: Store, port=5555, channel='local_mock'):
     class Handler(BaseHTTPRequestHandler):
+        def discard_body(self):
+            # 拒绝 POST 前有限地读掉请求体，避免 Windows 关闭连接时以 RST 吞掉错误响应。
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                self.connection.settimeout(1)
+                if 0 < size <= 32768:
+                    self.rfile.read(size)
+            except (ValueError, OSError):
+                pass
+
         def respond(self, status, payload):
             data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
             self.send_response(status)
@@ -35,6 +45,8 @@ def make_server(store: Store, port=5555):
             # 本地教学服务没有账号体系；拒绝浏览器跨域请求及非本机 Host。
             hosts = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
             if self.headers.get('Origin') or self.headers.get('Host') not in hosts:
+                if self.command == 'POST':
+                    self.discard_body()
                 self.respond(403, {'error': '只接受本机客户端请求。'})
                 return False
             return True
@@ -44,7 +56,8 @@ def make_server(store: Store, port=5555):
                 return
             route = urlsplit(self.path)
             if route.path == '/health':
-                self.respond(200, {'service': 'codex-user-bridge', 'is_simulated': True})
+                self.respond(200, {'service': 'codex-user-bridge', 'channel': channel,
+                                   'is_simulated': channel == 'local_mock'})
             elif route.path.startswith('/chat/'):
                 task_id = parse_qs(route.query).get('task_id', [''])[0]
                 result = store.get(task_id, route.path[len('/chat/'):])
@@ -56,9 +69,11 @@ def make_server(store: Store, port=5555):
             if not self.allowed():
                 return
             if self.path != '/chat':
+                self.discard_body()
                 self.respond(404, {'error': '接口不存在。'})
                 return
             if self.headers.get_content_type() != 'application/json':
+                self.discard_body()
                 self.respond(415, {'error': '请使用 application/json。'})
                 return
             try:
@@ -80,7 +95,7 @@ def make_server(store: Store, port=5555):
                 self.respond(400, {'error': str(exc)})
                 return
             try:
-                result = store.send(task_id, request_id, message, options)
+                result = store.send(task_id, request_id, message, options, channel)
             except ValueError as exc:
                 self.respond(409, {'error': str(exc)})
                 return
@@ -115,22 +130,34 @@ def main():
     parser.add_argument('--db', type=Path, default=Path('.local/messages.sqlite3'))
     parser.add_argument('--interval', type=positive, default=3.0)
     parser.add_argument('--delay', type=positive, default=3.0)
+    parser.add_argument('--channel', choices=['local_mock', 'telegram'], default='local_mock')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     store = Store(args.db)
-    server = make_server(store, args.port)
+    server = make_server(store, args.port, args.channel)
     stop = threading.Event()
-    worker = threading.Thread(target=reply_worker,
-                              args=(store, stop, args.interval, args.delay), daemon=True)
+    if args.channel == 'telegram':
+        from .telegram import TelegramChannel
+        try:
+            telegram = TelegramChannel.from_env(store)
+            telegram.start()
+        except (ValueError, RuntimeError) as exc:
+            server.server_close()
+            parser.exit(2, f'{exc}\n')
+        worker = threading.Thread(target=telegram.run, args=(stop,), daemon=True)
+    else:
+        worker = threading.Thread(target=reply_worker,
+                                  args=(store, stop, args.interval, args.delay), daemon=True)
     worker.start()
-    logging.info('本地模拟服务 http://127.0.0.1:%s，数据库 %s', server.server_port, args.db.resolve())
+    logging.info('渠道 %s，本地服务 http://127.0.0.1:%s，数据库 %s',
+                 args.channel, server.server_port, args.db.resolve())
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
-        worker.join(timeout=6)
+        worker.join(timeout=15)
         server.server_close()
 
 

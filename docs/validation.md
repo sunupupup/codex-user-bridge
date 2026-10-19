@@ -1,5 +1,7 @@
 # 第一阶段验收
 
+最新补充：0.3.0 Telegram 文本私聊代码与模拟 API 验证见本文末尾和 [Telegram 使用说明](./telegram.md)。原有真实模型记录仅适用于 local_mock 渠道。
+
 日期：2026-10-20。环境：Windows、Python 3.12.10、MCP SDK 1.30.0、Codex CLI 0.163.0-alpha.10.2。
 
 ## 已验证
@@ -60,3 +62,12 @@
 - 缓存副本的 uv 环境独立创建，没有依赖原始源码目录；不调用模型。
 - 发布扫描排除 .local、.venv、缓存与数据库；已检查源码无密钥特征或开发机绝对路径。LICENSE 保留原仓库 MIT 文本。
 - 当前结构的实测平台为 Windows；未运行 Linux/macOS 实测。GitHub 公开源码不等于发布到官方插件商店。
+
+## 0.3.0：Telegram 渠道
+
+- 默认仍为 local_mock；--channel telegram 才启用真实通道，不会由模拟线程回答 Telegram 问题。
+- 21 项自动检查通过；测试真实 MCP 子进程 → 本机 HTTP → 模拟 Telegram HTTP API → 模拟入站回答 → 查询同一问题。
+- 校验引用回复、问题编号回复、多个问题不串答、陌生人/其他聊天/无关联文本被忽略、首条回答不可覆盖、重复更新与持久化游标。
+- 检查旧版 SQLite 数据库升级后保留 local_mock 来源；发送中断恢复 unknown、不自动重发；429 冷却持久化；Webhook 冲突与重复消费者被拒绝。
+- 超长问题明确失败，不能悄悄截掉影响决定的条件。带 Token 的错误描述不会进入工具结果。
+- 没有真实 Bot Token 和手机联调；不能把模拟测试的 source=telegram 字段作为实际外部用户答复证明。没有调用付费模型。

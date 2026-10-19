@@ -13,12 +13,25 @@ class Store:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
+            # 建表与升级也串行化，避免两个启动进程同时添加同一个字段。
+            db.execute('BEGIN IMMEDIATE')
             db.execute('''CREATE TABLE IF NOT EXISTS questions (
                 question_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                 request_id TEXT NOT NULL, message TEXT NOT NULL,
                 options TEXT NOT NULL, created_at REAL NOT NULL,
                 reply TEXT, answered_at REAL,
                 UNIQUE(task_id, request_id))''')
+            # 旧版数据库原位升级；缺省 local_mock，旧回答不会被改成真人回复。
+            columns = {row[1] for row in db.execute('PRAGMA table_info(questions)')}
+            for name, definition in {
+                'channel': "TEXT NOT NULL DEFAULT 'local_mock'",
+                'delivery_status': "TEXT NOT NULL DEFAULT 'sent'",
+                'delivery_error': 'TEXT', 'telegram_message_id': 'INTEGER',
+                'sender_id': 'INTEGER',
+            }.items():
+                if name not in columns:
+                    db.execute(f'ALTER TABLE questions ADD COLUMN {name} {definition}')
+            db.execute('CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
 
     @contextmanager
     def connect(self):
@@ -30,26 +43,30 @@ class Store:
         finally:
             db.close()
 
-    def send(self, task_id: str, request_id: str, message: str, options: list[str]):
+    def send(self, task_id: str, request_id: str, message: str, options: list[str], channel='local_mock'):
         encoded = json.dumps(options, ensure_ascii=False)
         with self.connect() as db:
             # 同一事务内检查和写入，避免并发重试生成两个问题。
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT question_id, message, options FROM questions '
+            row = db.execute('SELECT question_id, message, options, channel FROM questions '
                              'WHERE task_id=? AND request_id=?', (task_id, request_id)).fetchone()
             if row:
-                if row[1:] != (message, encoded):
+                if row[1:] != (message, encoded, channel):
                     raise ValueError('同一个 request_id 已用于不同问题，请使用新的编号。')
                 question_id = row[0]
             else:
                 question_id = 'q_' + uuid.uuid4().hex
-                db.execute('INSERT INTO questions VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)',
-                           (question_id, task_id, request_id, message, encoded, time.time()))
+                db.execute('INSERT INTO questions '
+                           '(question_id,task_id,request_id,message,options,created_at,channel,delivery_status) '
+                           'VALUES (?,?,?,?,?,?,?,?)',
+                           (question_id, task_id, request_id, message, encoded, time.time(), channel,
+                            'queued' if channel == 'telegram' else 'sent'))
         return self.get(task_id, question_id)
 
     def get(self, task_id: str, question_id: str):
         with self.connect() as db:
-            row = db.execute('SELECT message, options, created_at, reply, answered_at '
+            row = db.execute('SELECT message, options, created_at, reply, answered_at, channel, '
+                             'delivery_status, delivery_error, sender_id '
                              'FROM questions WHERE task_id=? AND question_id=?',
                              (task_id, question_id)).fetchone()
         if row is None:
@@ -58,14 +75,84 @@ class Store:
                 'message': row[0], 'options': json.loads(row[1]), 'created_at': row[2],
                 'status': 'answered' if row[3] is not None else 'pending',
                 'reply': None if row[3] is None else {
-                    'text': row[3], 'source': 'local_mock',
-                    'is_simulated': True, 'answered_at': row[4]},
-                'is_simulated': True, 'poll_after_seconds': 3}
+                    'text': row[3], 'source': row[5], 'sender_id': row[8],
+                    'is_simulated': row[5] == 'local_mock', 'answered_at': row[4]},
+                'channel': row[5], 'delivery_status': row[6], 'delivery_error': row[7],
+                'is_simulated': row[5] == 'local_mock', 'poll_after_seconds': 3}
 
     def auto_reply(self, delay: float, text: str):
         with self.connect() as db:
             # 只推进 pending → answered；重复扫描不覆盖已有回答。
             result = db.execute('UPDATE questions SET reply=?, answered_at=? '
-                                'WHERE reply IS NULL AND created_at<=?',
+                                "WHERE channel='local_mock' AND reply IS NULL AND created_at<=?",
                                 (text, time.time(), time.time() - delay))
             return result.rowcount
+
+    def bind_telegram(self, identity):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT value FROM state WHERE key='telegram_identity'").fetchone()
+            if row and row[0] != identity:
+                raise ValueError('此数据库已绑定另一个 Telegram Bot/接收者，请使用不同的 --db。')
+            db.execute("INSERT OR IGNORE INTO state VALUES ('telegram_identity',?)", (identity,))
+
+    def lease(self, owner, release=False):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT value FROM state WHERE key='telegram_lease'").fetchone()
+            previous = json.loads(row[0]) if row else {}
+            if previous.get('owner') != owner and previous.get('until', 0) > time.time():
+                return False
+            value = json.dumps({'owner': owner, 'until': 0 if release else time.time() + 45})
+            db.execute("INSERT OR REPLACE INTO state VALUES ('telegram_lease',?)", (value,))
+            return True
+
+    def recover_sending(self):
+        with self.connect() as db:
+            db.execute("UPDATE questions SET delivery_status='unknown', delivery_error=? "
+                       "WHERE channel='telegram' AND delivery_status='sending'",
+                       ('服务曾在发送过程中退出，结果未知；不会自动重发。',))
+
+    def claim_outgoing(self):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            cooldown = db.execute("SELECT value FROM state WHERE key='telegram_send_after'").fetchone()
+            if cooldown and float(cooldown[0]) > time.time():
+                return None
+            row = db.execute("SELECT question_id,task_id FROM questions WHERE channel='telegram' "
+                             "AND delivery_status='queued' AND reply IS NULL ORDER BY created_at LIMIT 1").fetchone()
+            if not row:
+                return None
+            db.execute("UPDATE questions SET delivery_status='sending' WHERE question_id=?", (row[0],))
+        return self.get(row[1], row[0])
+
+    def delivered(self, question_id, status, message_id=None, error=None, retry_after=0):
+        with self.connect() as db:
+            db.execute('UPDATE questions SET delivery_status=?,telegram_message_id=?,delivery_error=? '
+                       'WHERE question_id=?', (status, message_id, error, question_id))
+            if retry_after:
+                db.execute("INSERT OR REPLACE INTO state VALUES ('telegram_send_after',?)",
+                           (str(time.time() + retry_after),))
+
+    def offset(self):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM state WHERE key='telegram_offset'").fetchone()
+        return int(row[0]) if row else 0
+
+    def accept_update(self, update_id, reply=None):
+        # 回答与游标同事务提交：崩溃后可重收，绝不先确认消息再丢失回答。
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT value FROM state WHERE key='telegram_offset'").fetchone()
+            if row and update_id < int(row[0]):
+                return
+            if reply:
+                qid, message_id, answer, sender_id = reply
+                if qid:
+                    predicate, value = 'question_id=?', qid
+                else:
+                    predicate, value = 'telegram_message_id=?', message_id
+                db.execute(f"UPDATE questions SET reply=?,answered_at=?,sender_id=? WHERE {predicate} "
+                           "AND channel='telegram' AND reply IS NULL",
+                           (answer, time.time(), sender_id, value))
+            db.execute("INSERT OR REPLACE INTO state VALUES ('telegram_offset',?)", (str(update_id + 1),))

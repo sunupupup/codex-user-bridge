@@ -15,8 +15,9 @@ Identifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r'^\S(?:
 
 class Reply(BaseModel):
     text: str
-    source: Literal['local_mock']
-    is_simulated: Literal[True]
+    source: Literal['local_mock', 'telegram']
+    is_simulated: bool
+    sender_id: int | None = None
     answered_at: float
 
 
@@ -28,12 +29,15 @@ class Question(BaseModel):
     created_at: float
     status: Literal['pending', 'answered']
     reply: Reply | None
-    is_simulated: Literal[True]
+    is_simulated: bool
+    channel: Literal['local_mock', 'telegram'] = 'local_mock'
+    delivery_status: Literal['queued', 'sending', 'sent', 'unknown', 'failed'] = 'sent'
+    delivery_error: str | None = None
     poll_after_seconds: int
 
 
 @mcp.tool(annotations={'readOnlyHint': False, 'destructiveHint': False,
-                       'idempotentHint': True, 'openWorldHint': False})
+                       'idempotentHint': True, 'openWorldHint': True})
 async def bridge_send_question(
     task_id: Identifier,
     request_id: Identifier,
@@ -41,11 +45,12 @@ async def bridge_send_question(
     options: Annotated[list[Annotated[str, Field(min_length=1, max_length=200)]],
                        Field(max_length=10)] = [],
 ) -> Question:
-    """发送问题到本地模拟渠道，立即返回 question_id，不等待回答。
+    """将问题保存到当前渠道的发送队列，立即返回 question_id，不等待回答。
 
     task_id 是调用者为当前任务选择的稳定标识，并非自动获取的 Codex thread ID。
     request_id 是当前问题的稳定标识；重试相同问题必须复用，避免重复通知。
-    options 为可选答案。返回值 is_simulated=true；本工具不取得真实用户授权。
+    options 为可选答案。queued/sending 仅表示排队，sent 表示平台接受，不代表已读。
+    unknown 表示发送结果未知，不自动重发。is_simulated=true 时绝不能作为真人授权。
     """
     return Question.model_validate(await adapter.send(task_id, request_id, message, options))
 
