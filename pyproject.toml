@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-user-bridge"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local asynchronous user communication plugin for Codex"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "sunupupup"}]
-dependencies = ["mcp==1.30.0"]
+dependencies = [
+    "lark-oapi==1.7.5",
+    "mcp==1.30.0",
+]
 
 [project.scripts]
 codex-user-bridge-mcp = "codex_user_bridge.mcp_server:main"

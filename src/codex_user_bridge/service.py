@@ -130,21 +130,25 @@ def main():
     parser.add_argument('--db', type=Path, default=Path('.local/messages.sqlite3'))
     parser.add_argument('--interval', type=positive, default=3.0)
     parser.add_argument('--delay', type=positive, default=3.0)
-    parser.add_argument('--channel', choices=['local_mock', 'telegram'], default='local_mock')
+    parser.add_argument('--channel', choices=['local_mock', 'telegram', 'feishu'], default='local_mock')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     store = Store(args.db)
     server = make_server(store, args.port, args.channel)
     stop = threading.Event()
-    if args.channel == 'telegram':
-        from .telegram import TelegramChannel
+    if args.channel != 'local_mock':
         try:
-            telegram = TelegramChannel.from_env(store)
-            telegram.start()
+            if args.channel == 'telegram':
+                from .telegram import TelegramChannel
+                external = TelegramChannel.from_env(store)
+            else:
+                from .feishu import FeishuChannel
+                external = FeishuChannel.from_env(store)
+            external.start()
         except (ValueError, RuntimeError) as exc:
             server.server_close()
             parser.exit(2, f'{exc}\n')
-        worker = threading.Thread(target=telegram.run, args=(stop,), daemon=True)
+        worker = threading.Thread(target=external.run, args=(stop,), daemon=True)
     else:
         worker = threading.Thread(target=reply_worker,
                                   args=(store, stop, args.interval, args.delay), daemon=True)

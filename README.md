@@ -2,9 +2,11 @@
 
 Codex 本地用户通信插件：遇到需要用户决定的问题时，发送后立即返回，继续独立工作，再主动查询回答。
 
-**支持本地模拟与 Telegram 文本私聊。** 默认模拟模式每隔几秒生成回答；Telegram 模式发送真实通知并接收所绑定用户的文本回复。Telegram 代码已通过模拟 API 检查，真实 Bot/手机联调仍待配置凭据。
+**支持本地模拟、Telegram 与飞书应用机器人文本私聊。** 默认模拟模式每隔几秒生成回答；Telegram 模式发送真实通知并接收所绑定用户的文本回复。Telegram 代码已通过模拟 API 检查，真实 Bot/手机联调仍待配置凭据。
 
 Telegram 的 Bot 创建、.env 配置、私聊 ID 查询和启动步骤见 [Telegram 使用说明](./docs/telegram.md)。
+
+飞书的应用、open_id 与长连接配置见 [飞书使用说明](./docs/feishu.md)。
 
 ## 项目结构
 
@@ -133,7 +135,7 @@ python scripts/verify_plugin.py
 python scripts/verify_plugin.py --roundtrip
 ```
 
-21 项自动检查通过（含 Telegram 模拟 API 端到端）；此前真实 Codex CLI 样本验证的是本地模拟渠道，详见[验收记录](./docs/validation.md)。安装验证使用独立临时配置，不改日常 Codex 配置、不调用模型。
+28 项自动检查通过（含 Telegram、飞书模拟 API 及 MCP 端到端）；此前真实 Codex CLI 样本验证的是本地模拟渠道，详见[验收记录](./docs/validation.md)。安装验证使用独立临时配置，不改日常 Codex 配置、不调用模型。飞书真实手机收发待配置凭据后验证。
 
 [设计](./docs/plans/2026-10-20-local-bridge-design.md) · [更新记录](./CHANGELOG.md) · [MIT 许可证](./LICENSE)
 
