@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-user-bridge"
+version = "0.2.0"
+description = "Local asynchronous user communication plugin for Codex"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "sunupupup"}]
+dependencies = ["mcp==1.30.0"]
+
+[project.scripts]
+codex-user-bridge-mcp = "codex_user_bridge.mcp_server:main"
+codex-user-bridge-serve = "codex_user_bridge.service:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

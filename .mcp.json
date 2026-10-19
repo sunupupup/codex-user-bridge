@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "user_bridge": {
+      "command": "uv",
+      "args": ["run", "--frozen", "codex-user-bridge-mcp"],
+      "cwd": ".",
+      "env": {"BRIDGE_BASE_URL": "http://127.0.0.1:5555"}
+    }
+  }
+}

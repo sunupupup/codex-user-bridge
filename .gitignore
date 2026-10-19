@@ -1,0 +1,12 @@
+.venv/
+.local/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.sqlite3-journal
+*.log

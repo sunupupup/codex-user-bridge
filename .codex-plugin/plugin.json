@@ -1,0 +1,15 @@
+{
+  "name": "codex-user-bridge",
+  "version": "0.2.0",
+  "author": {"name": "sunupupup"},
+  "requires_local_executor": true,
+  "description": "通过本地模拟渠道发送问题并主动查询回答的学习插件。",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "本地用户通信",
+    "shortDescription": "发送问题、模拟回答、主动查询",
+    "developerName": "Practice",
+    "category": "Productivity"
+  }
+}
