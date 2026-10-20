@@ -2,7 +2,7 @@
 
 Codex 本地用户通信插件：遇到需要用户决定的问题时，发送后立即返回，继续独立工作，再主动查询回答。
 
-**支持本地模拟、Telegram、飞书应用机器人和个人微信 ClawBot/iLink 文本问答。** 默认模拟模式每隔几秒生成回答；外部渠道发送通知并接收所绑定用户的文本回复。三个外部渠道已通过模拟 API 与 MCP 检查，真实账号/手机联调仍待你配置后测试。
+**支持本地模拟、Telegram、飞书应用机器人和个人微信 ClawBot/iLink 文本问答。** 默认本地聊天模式由你在网页手动回复；外部渠道发送通知并接收所绑定用户的文本回复。三个外部渠道已通过模拟 API 与 MCP 检查，真实账号/手机联调仍待你配置后测试。
 
 Telegram 的 Bot 创建、.env 配置、私聊 ID 查询和启动步骤见 [Telegram 使用说明](./docs/telegram.md)。
 
@@ -41,9 +41,13 @@ uv sync --frozen
 python scripts/serve.py
 ```
 
-服务默认只监听 `127.0.0.1:5555`。每 3 秒扫描一次，问题等待至少 3 秒后生成回答，通常约 3～6 秒。数据库保存在项目 `.local/messages.sqlite3`，重启可继续查询。Ctrl+C 停止；Windows 可双击 `start.cmd`。
+默认启动 `local_chat` 手动聊天模式。浏览器打开 `http://127.0.0.1:5555`，Codex 发来的问题会自动出现；输入回答或点候选答案后点击发送，再让 Codex 查询。页面每两秒更新，刷新不会丢失已保存的问答。最近显示 200 个问题。
 
-第二个终端运行：
+只监听本机，数据库保存在项目 `.local/messages.sqlite3`。`source: local_chat`、`is_simulated: false` 表示本机浏览器的手动回答，不代表验证了远端用户身份。Ctrl+C 停止；Windows 可双击 `start.cmd`。
+
+需要原来的自动模拟时，改用 `python scripts/serve.py --channel local_mock`。它每 3 秒扫描并生成模拟回答，不能视为真人授权。
+
+在自动模拟模式下，第二个终端运行：
 
 ```powershell
 uv run --frozen python scripts/demo.py
@@ -137,7 +141,7 @@ python scripts/verify_plugin.py
 python scripts/verify_plugin.py --roundtrip
 ```
 
-42 项自动检查通过（含三个渠道的模拟 API 及 MCP 端到端）；此前真实 Codex CLI 样本验证的是本地模拟渠道，详见[验收记录](./docs/validation.md)。安装验证使用独立临时配置，不改日常 Codex 配置、不调用模型。外部渠道真实手机收发待配置账号后验证。
+46 项自动检查通过（含三个渠道的模拟 API 及 MCP 端到端）；此前真实 Codex CLI 样本验证的是本地模拟渠道，详见[验收记录](./docs/validation.md)。安装验证使用独立临时配置，不改日常 Codex 配置、不调用模型。外部渠道真实手机收发待配置账号后验证。
 
 [设计](./docs/plans/2026-10-20-local-bridge-design.md) · [更新记录](./CHANGELOG.md) · [MIT 许可证](./LICENSE)
 

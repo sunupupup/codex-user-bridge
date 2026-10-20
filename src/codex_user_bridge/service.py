@@ -1,4 +1,4 @@
-"""仅监听本机的 HTTP 服务，计时线程模拟外部用户。"""
+"""仅监听本机的问答服务：浏览器手动聊天或外部渠道。"""
 
 import argparse
 import json
@@ -6,6 +6,7 @@ import logging
 import math
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -42,9 +43,12 @@ def make_server(store: Store, port=5555, channel='local_mock'):
             self.wfile.write(data)
 
         def allowed(self):
-            # 本地教学服务没有账号体系；拒绝浏览器跨域请求及非本机 Host。
+            # 页面仅允许精确同源请求；不能因添加 UI 就允许任意网站写入回答。
             hosts = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
-            if self.headers.get('Origin') or self.headers.get('Host') not in hosts:
+            host, origin = self.headers.get('Host'), self.headers.get('Origin')
+            if (host not in hosts or (origin is not None and not
+                    (channel == 'local_chat' and origin == 'http://' + host))
+                    or self.headers.get('Sec-Fetch-Site') == 'cross-site'):
                 if self.command == 'POST':
                     self.discard_body()
                 self.respond(403, {'error': '只接受本机客户端请求。'})
@@ -55,7 +59,19 @@ def make_server(store: Store, port=5555, channel='local_mock'):
             if not self.allowed():
                 return
             route = urlsplit(self.path)
-            if route.path == '/health':
+            if route.path == '/' and channel == 'local_chat':
+                data = files('codex_user_bridge').joinpath('chat.html').read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Frame-Options', 'DENY')
+                self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+                self.end_headers()
+                self.wfile.write(data)
+            elif route.path == '/ui/questions' and channel == 'local_chat':
+                self.respond(200, {'questions': store.local_questions()})
+            elif route.path == '/health':
                 self.respond(200, {'service': 'codex-user-bridge', 'channel': channel,
                                    'is_simulated': channel == 'local_mock'})
             elif route.path.startswith('/chat/'):
@@ -68,7 +84,8 @@ def make_server(store: Store, port=5555, channel='local_mock'):
         def do_POST(self):
             if not self.allowed():
                 return
-            if self.path != '/chat':
+            ui_reply = self.path == '/ui/reply' and channel == 'local_chat'
+            if self.path != '/chat' and not ui_reply:
                 self.discard_body()
                 self.respond(404, {'error': '接口不存在。'})
                 return
@@ -85,6 +102,19 @@ def make_server(store: Store, port=5555, channel='local_mock'):
                 if not isinstance(data, dict):
                     raise ValueError('请求体必须是 JSON 对象。')
                 task_id = text(data.get('task_id'), 'task_id', 200)
+                if ui_reply:
+                    question_id = text(data.get('question_id'), 'question_id', 200)
+                    answer = text(data.get('text'), 'text', 4000)
+                    try:
+                        result = store.local_reply(task_id, question_id, answer)
+                    except LookupError as exc:
+                        self.respond(404, {'error': str(exc)})
+                        return
+                    except ValueError as exc:
+                        self.respond(409, {'error': str(exc)})
+                        return
+                    self.respond(200, result)
+                    return
                 request_id = text(data.get('request_id'), 'request_id', 200)
                 message = text(data.get('message'), 'message', 4000)
                 options = data.get('options', [])
@@ -130,13 +160,14 @@ def main():
     parser.add_argument('--db', type=Path, default=Path('.local/messages.sqlite3'))
     parser.add_argument('--interval', type=positive, default=3.0)
     parser.add_argument('--delay', type=positive, default=3.0)
-    parser.add_argument('--channel', choices=['local_mock', 'telegram', 'feishu', 'weixin'], default='local_mock')
+    parser.add_argument('--channel', choices=['local_chat', 'local_mock', 'telegram', 'feishu', 'weixin'], default='local_chat')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     store = Store(args.db)
     server = make_server(store, args.port, args.channel)
     stop = threading.Event()
-    if args.channel != 'local_mock':
+    worker = None
+    if args.channel not in ('local_mock', 'local_chat'):
         try:
             if args.channel == 'telegram':
                 from .telegram import TelegramChannel
@@ -152,10 +183,11 @@ def main():
             server.server_close()
             parser.exit(2, f'{exc}\n')
         worker = threading.Thread(target=external.run, args=(stop,), daemon=True)
-    else:
+    elif args.channel == 'local_mock':
         worker = threading.Thread(target=reply_worker,
                                   args=(store, stop, args.interval, args.delay), daemon=True)
-    worker.start()
+    if worker:
+        worker.start()
     logging.info('渠道 %s，本地服务 http://127.0.0.1:%s，数据库 %s',
                  args.channel, server.server_port, args.db.resolve())
     try:
@@ -164,7 +196,8 @@ def main():
         pass
     finally:
         stop.set()
-        worker.join(timeout=45 if args.channel == 'weixin' else 15)
+        if worker:
+            worker.join(timeout=45 if args.channel == 'weixin' else 15)
         server.server_close()
 
 

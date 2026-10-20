@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-user-bridge"
-version = "0.5.0"
+version = "0.6.0"
 description = "Local asynchronous user communication plugin for Codex"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,3 +22,6 @@ codex-user-bridge-serve = "codex_user_bridge.service:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+codex_user_bridge = ["chat.html"]

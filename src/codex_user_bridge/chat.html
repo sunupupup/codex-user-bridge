@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bridge · 本地聊天</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f5f2;color:#252d28;font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif}header{position:sticky;top:0;background:#fffefbf5;border-bottom:1px solid #e3e6df;z-index:1}header>div{max-width:850px;margin:auto;padding:23px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px}h1{font-size:21px;margin:0;letter-spacing:-.5px}.subtitle{font-size:12px;color:#758077;margin-top:2px}.status{font-size:12px;color:#29704c;background:#e9f3e8;padding:6px 12px;border-radius:30px}main{max-width:850px;margin:0 auto;padding:28px 24px 80px}.intro{color:#778177;font-size:13px;margin:0 0 24px}.empty{padding:70px 20px;text-align:center;border:1px dashed #ccd5c9;border-radius:18px;background:#fcfcf9}.empty h2{font-size:20px;font-weight:500}.empty p{color:#758077;font-size:14px}.message{margin-bottom:30px}.meta{color:#768076;font-size:12px;margin:0 0 8px;overflow-wrap:anywhere;display:flex;gap:10px;flex-wrap:wrap}.bubble{padding:18px 22px;border-radius:3px 18px 18px 18px;background:white;border:1px solid #e4e7df;white-space:pre-wrap;overflow-wrap:anywhere;max-width:90%}.answer{margin:18px 0 0 auto;background:#e3efdf;border-color:#d7e5d2;border-radius:18px 3px 18px 18px}.answer-label{color:#66815e;font-size:12px;margin-bottom:5px}.reply-box{margin:14px 0 0 30px;max-width:690px}.choices{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid #d9dfd4;padding:8px 15px;background:#fff;color:#354335}button:hover{background:#edf2e9}button:disabled{opacity:.5;cursor:default}.composer{display:flex;align-items:flex-end;gap:10px}textarea{flex:1;min-width:0;resize:vertical;min-height:76px;max-height:220px;background:#fffefb;border:1px solid #d9dfd4;border-radius:12px;padding:12px;font:inherit;color:inherit}textarea:focus{outline:2px solid #94ad88;outline-offset:2px}.send{background:#324e39;color:white;border:0;padding:11px 21px}.send:hover{background:#426448}.error{font-size:13px;color:#a03b30;min-height:20px;margin-top:6px}.hint{font-size:11px;color:#818b7d}.badge{color:#987a30}.done{color:#538346}footer{text-align:center;font-size:12px;color:#929a8c;padding:20px} @media(max-width:540px){header>div,main{padding-left:16px;padding-right:16px}.bubble{max-width:100%}.reply-box{margin-left:0}.composer{gap:7px}.send{padding:11px 14px}}
+</style>
+<header><div><div><h1>Bridge <span style="font-weight:400;color:#798476">/ 本地聊天</span></h1><div class="subtitle">Codex 提问，你来回答</div></div><span class="status" id="connection" role="status">正在连接</span></div></header>
+<main><p class="intro">这是本机手动测试渠道。回复会保存，等待 Codex 下次查询。</p><div id="messages"><div class="empty" id="empty"><h2>等一个来自 Codex 的问题</h2><p>让 Codex 调用 bridge_send_question，问题就会出现在这里。<br>页面会自动更新，不需要刷新。</p></div></div></main>
+<script>
+const messages=document.querySelector('#messages'), connection=document.querySelector('#connection');
+const cards=new Map();
+function element(tag,cls,text){const node=document.createElement(tag);node.className=cls||'';if(text!==undefined)node.textContent=text;return node;}
+async function api(path,body){const response=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(8000)});const result=await response.json();if(!response.ok)throw Error(result.error||'请求失败');return result;}
+function draw(question){
+  let card=cards.get(question.question_id);
+  if(!card){
+    const root=element('section','message');
+    const meta=element('div','meta');meta.append(element('span','','Codex · '+question.task_id),element('span','',new Date(question.created_at*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})));
+    const badge=element('span','badge','待回复');meta.append(badge);
+    // 消息来自工具输入，只作为文本渲染，不能作为 HTML 或脚本执行。
+    root.append(meta,element('div','bubble',question.message));
+    const box=element('div','reply-box'), choices=element('div','choices');
+    const composer=element('form','composer'), input=element('textarea');input.placeholder='回复这条问题…';input.maxLength=4000;input.setAttribute('aria-label','回复：'+question.message);
+    const send=element('button','send','发送');send.type='submit';
+    const error=element('div','error');error.setAttribute('role','alert');
+    composer.append(input,send);box.append(choices,composer,element('div','hint','Ctrl / ⌘ + Enter 发送 · Enter 换行'),error);root.append(box);
+    card={root,badge,box,input,send,error,choices,question};cards.set(question.question_id,card);messages.append(root);
+    const submit=async()=>{
+      const text=input.value.trim();if(!text||send.disabled)return;
+      send.disabled=true;error.textContent='';
+      try{draw(await api('/ui/reply',{task_id:question.task_id,question_id:question.question_id,text}));}
+      catch(exc){error.textContent=exc.message;}
+      finally{send.disabled=false;}
+    };
+    for(const option of question.options){const button=element('button','',option);button.type='button';button.onclick=()=>{input.value=option;input.focus();};choices.append(button);}
+    composer.onsubmit=event=>{event.preventDefault();submit();};
+    input.onkeydown=event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();submit();}};
+  }
+  // 轮询只更新状态，不重建输入框，保留正在编辑的草稿和焦点。
+  if(question.reply&&!card.answer){card.badge.textContent='已回复';card.badge.className='done';card.box.remove();const answer=element('div','bubble answer');answer.append(element('div','answer-label','你 · 已保存'),element('div','',question.reply.text));card.root.append(answer);card.answer=answer;}
+}
+async function refresh(){
+  try{const result=await api('/ui/questions');if(result.questions.length)document.querySelector('#empty')?.remove();const visible=new Set(result.questions.map(q=>q.question_id));for(const [id,card] of cards){if(!visible.has(id)){card.root.remove();cards.delete(id);}}for(const question of result.questions)draw(question);connection.textContent='● 本地已连接';}
+  catch{connection.textContent='连接中断 · 正在重试';}
+  finally{setTimeout(refresh,2000);}
+}
+refresh();
+</script>
+</html>

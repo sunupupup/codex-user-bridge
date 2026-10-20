@@ -61,7 +61,7 @@ class Store:
                            '(question_id,task_id,request_id,message,options,created_at,channel,delivery_status) '
                            'VALUES (?,?,?,?,?,?,?,?)',
                            (question_id, task_id, request_id, message, encoded, time.time(), channel,
-                            'sent' if channel == 'local_mock' else 'queued'))
+                            'sent' if channel in ('local_mock', 'local_chat') else 'queued'))
         return self.get(task_id, question_id)
 
     def get(self, task_id: str, question_id: str):
@@ -80,6 +80,28 @@ class Store:
                     'is_simulated': row[5] == 'local_mock', 'answered_at': row[4]},
                 'channel': row[5], 'delivery_status': row[6], 'delivery_error': row[7],
                 'is_simulated': row[5] == 'local_mock', 'poll_after_seconds': 3}
+
+    def local_questions(self):
+        # 只列出手动聊天渠道，避免本地页面展示其他平台的历史消息。
+        with self.connect() as db:
+            rows = db.execute("SELECT task_id,question_id FROM questions WHERE channel='local_chat' "
+                              'ORDER BY created_at DESC LIMIT 200').fetchall()
+        return [self.get(task, question) for task, question in reversed(rows)]
+
+    def local_reply(self, task_id, question_id, answer):
+        # 条件更新是原子的：两个页面同时回复时只有首条生效，重复同文提交可安全重试。
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT reply FROM questions WHERE task_id=? AND question_id=? AND channel='local_chat'",
+                             (task_id, question_id)).fetchone()
+            if row is None:
+                raise LookupError('问题不存在。')
+            if row[0] is not None and row[0] != answer:
+                raise ValueError('此问题已有回复，不能覆盖。')
+            db.execute("UPDATE questions SET reply=?,answered_at=?,sender_id='local_browser' "
+                       "WHERE task_id=? AND question_id=? AND channel='local_chat' AND reply IS NULL",
+                       (answer, time.time(), task_id, question_id))
+        return self.get(task_id, question_id)
 
     def auto_reply(self, delay: float, text: str):
         with self.connect() as db:

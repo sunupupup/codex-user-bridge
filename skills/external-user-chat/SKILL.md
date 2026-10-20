@@ -15,3 +15,4 @@ description: 当用户要求通过本地模拟渠道、Telegram、飞书或个�
 8. 回答以 tool result 返回，不是 user message，不自动控制其他聊天。不要发送密钥或凭据。
 9. source=telegram/feishu/weixin、is_simulated=false 时，是已绑定私聊用户对该问题的首条有效文本回答。严格按原问题范围理解，不扩大为其他操作或系统权限审批；不要自动把一句“同意”用于新问题。
 10. 微信缺少上下文时保持 queued，需要用户先在手机发消息；-2 拒绝后等待新的入站消息，登录失效则需要重新扫码并重启。不能保证无人发言后仍可无限期主动通知。
+11. source=local_chat 表示本机聊天页面手动提交的回答，sender_id=local_browser；不会自动回复，也不证明远端账号身份。请用户打开服务首页回复，之后查询同一个问题。
